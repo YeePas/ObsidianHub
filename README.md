@@ -73,12 +73,8 @@ The text, voice, and reMarkable PDF branches are live and working in the main "O
 
 A standalone PNG-capture workflow (`png-flow-n8n-workflow.json`) is being built and tested separately, node by node. Known open items:
 
-- [ ] Fix the Telegram credential on "Get Remarkable PNG File" in the main workflow, or keep using the standalone PNG JSON instead.
-- [ ] Finish testing the remaining nodes in the standalone PNG flow (Analyze, both Uploads, Bevestig, Extract Actiepunten).
-- [ ] Apply the `/api/v1/tasks` Todoist endpoint fix to the live "Maak Todoist Taak (reMarkable)" node (already fixed in the PNG JSON).
 - [ ] Add retry/error handling to critical nodes (Dropbox, OpenAI, Todoist) so one failure doesn't take down the whole execution.
-- [ ] No persistent execution history — n8n execution logs were lost after a restart; consider a persistent database.
-- [ ] The ngrok tunnel URL is not stable; consider a fixed domain.
+- [ ] The ngrok for N8N tunnel URL is not stable; consider a fixed domain.
 
 See `architectuur-en-roadmap.md` for full detail on each item.
 
