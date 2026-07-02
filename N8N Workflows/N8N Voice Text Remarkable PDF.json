@@ -1,0 +1,821 @@
+{
+  "name": "Obsidian",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "edited_message",
+          "channel_post"
+        ],
+        "additionalFields": {}
+      },
+      "id": "c4244253-1ab3-4b85-a6b7-7885c96dff25",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        496,
+        192
+      ],
+      "webhookId": "5ca1daef-2785-4726-bb20-980160a5feb5",
+      "credentials": {
+        "telegramApi": {
+          "id": "40SHzIiYXiRGLVgX",
+          "name": "Obsi8Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "var msg = $json.message || $json.edited_message || $json.channel_post;\nif (!msg) {\n  return [];\n}\nif (msg.voice) {\n  return [];\n}\nif (msg.photo || msg.document || msg.video || msg.audio || msg.animation || msg.sticker) {\n  return [];\n}\n\nvar rawText = msg.text || msg.caption || \"\";\nif (!String(rawText).trim()) {\n  return [];\n}\n\nvar sourceKind = \"text\";\nvar date = new Date((msg.date || Math.floor(Date.now() / 1000)) * 1000);\nvar formatter = new Intl.DateTimeFormat(\"sv-SE\", { timeZone: \"Europe/Amsterdam\", year: \"numeric\", month: \"2-digit\", day: \"2-digit\", hour: \"2-digit\", minute: \"2-digit\", second: \"2-digit\", hour12: false });\nvar formatted = formatter.format(date);\nvar datePart = formatted.slice(0, 10);\nvar timePart = formatted.slice(11, 19);\n\nfunction trimText(value) {\n  return String(value || \"\").trim();\n}\n\nfunction startsWithLower(value, prefix) {\n  return String(value || \"\").toLowerCase().indexOf(prefix) === 0;\n}\n\nfunction cleanTitle(value) {\n  var input = String(value || \"\");\n  var output = \"\";\n  for (var i = 0; i < input.length; i++) {\n    var ch = input.charAt(i);\n    var code = input.charCodeAt(i);\n    if (code < 32 || code > 126) {\n      continue;\n    }\n    if (code === 34 || code === 35 || code === 42 || code === 47 || code === 58 || code === 60 || code === 62 || code === 63 || code === 91 || code === 92 || code === 93 || code === 94 || code === 124) {\n      continue;\n    }\n    output += ch;\n  }\n  while (output.indexOf(\"  \") !== -1) {\n    output = output.split(\"  \").join(\" \");\n  }\n  return output.trim().slice(0, 80);\n}\n\nfunction firstSentence(value) {\n  var text = trimText(value).split(String.fromCharCode(10)).join(\" \");\n  while (text.indexOf(\"  \") !== -1) {\n    text = text.split(\"  \").join(\" \");\n  }\n  var stops = [\". \", \"? \", \"! \"];\n  var end = -1;\n  for (var i = 0; i < stops.length; i++) {\n    var pos = text.indexOf(stops[i]);\n    if (pos !== -1 && (end === -1 || pos < end)) {\n      end = pos + 1;\n    }\n  }\n  if (end === -1 || end > 240) {\n    return text.slice(0, 240).trim();\n  }\n  return text.slice(0, end).trim();\n}\n\nfunction findUrl(value) {\n  var pieces = String(value || \"\").split(\" \");\n  for (var i = 0; i < pieces.length; i++) {\n    var p = pieces[i].trim();\n    if (p.indexOf(\"http://\") === 0 || p.indexOf(\"https://\") === 0) {\n      while (p.endsWith(\".\") || p.endsWith(\",\") || p.endsWith(\")\")) {\n        p = p.slice(0, -1);\n      }\n      return p;\n    }\n  }\n  return \"\";\n}\n\nfunction extractManualTitleAndContent(value) {\n  var allText = String(value || \"\");\n  var lowerAll = trimText(allText).toLowerCase();\n  var prefixes = [\"de titel is\", \"titel\", \"title\"];\n  for (var prefIndex = 0; prefIndex < prefixes.length; prefIndex++) {\n    var prefix = prefixes[prefIndex];\n    if (lowerAll.indexOf(prefix) === 0) {\n      var rest = trimText(allText.slice(prefix.length));\n      while (rest.charAt(0) === \":\" || rest.charAt(0) === \"-\" || rest.charAt(0) === \"=\") {\n        rest = trimText(rest.slice(1));\n      }\n      var cut = rest.indexOf(String.fromCharCode(10));\n      var dot = rest.indexOf(\". \");\n      if (cut === -1 || (dot !== -1 && dot < cut)) {\n        cut = dot === -1 ? cut : dot + 1;\n      }\n      var titlePart = cut === -1 ? rest : rest.slice(0, cut);\n      var contentPart = cut === -1 ? \"\" : rest.slice(cut);\n      titlePart = trimText(titlePart);\n      contentPart = trimText(contentPart);\n      if (titlePart.endsWith(\".\")) {\n        titlePart = trimText(titlePart.slice(0, -1));\n      }\n      return { manualTitle: titlePart, content: contentPart };\n    }\n  }\n  var linesIn = allText.split(String.fromCharCode(10));\n  var manualTitle = \"\";\n  var contentLines = [];\n  for (var i = 0; i < linesIn.length; i++) {\n    var line = linesIn[i];\n    var lowered = trimText(line).toLowerCase();\n    if (!manualTitle && (lowered.indexOf(\"titel:\") === 0 || lowered.indexOf(\"title:\") === 0 || lowered.indexOf(\"titel :\") === 0 || lowered.indexOf(\"title :\") === 0)) {\n      manualTitle = trimText(line.slice(line.indexOf(\":\") + 1));\n    } else {\n      contentLines.push(line);\n    }\n  }\n  return { manualTitle: manualTitle, content: trimText(contentLines.join(String.fromCharCode(10))) };\n}\n\nfunction yamlList(items) {\n  var out = [];\n  for (var i = 0; i < items.length; i++) {\n    out.push(\"  - \" + items[i]);\n  }\n  return out;\n}\n\nvar extractedTitle = extractManualTitleAndContent(rawText);\nvar manualTitle = extractedTitle.manualTitle;\nvar content = extractedTitle.content;\nvar contentLines = content.split(String.fromCharCode(10));\nvar firstLine = trimText(contentLines[0]);\n\nvar type = \"memo\";\nvar prefixMap = [\n  [\"idee:\", \"idea\"],\n  [\"idea:\", \"idea\"],\n  [\"vraag:\", \"question\"],\n  [\"question:\", \"question\"],\n  [\"artikel:\", \"article\"],\n  [\"article:\", \"article\"],\n  [\"video:\", \"video\"],\n  [\"memo:\", \"memo\"],\n  [\"reflectie:\", \"reflection\"],\n  [\"todo:\", \"todo\"]\n];\nfor (var p = 0; p < prefixMap.length; p++) {\n  if (startsWithLower(firstLine, prefixMap[p][0])) {\n    type = prefixMap[p][1];\n    content = trimText(firstLine.slice(prefixMap[p][0].length) + String.fromCharCode(10) + contentLines.slice(1).join(String.fromCharCode(10)));\n    firstLine = trimText(content.split(String.fromCharCode(10))[0]);\n    break;\n  }\n}\n\nvar url = findUrl(content);\nif (url) {\n  var lowerUrl = url.toLowerCase();\n  if (lowerUrl.indexOf(\"youtube.com\") !== -1 || lowerUrl.indexOf(\"youtu.be\") !== -1 || lowerUrl.indexOf(\"vimeo.com\") !== -1) {\n    type = \"video\";\n  } else if (type === \"memo\") {\n    type = \"article\";\n  }\n}\n\nvar title = cleanTitle(manualTitle || firstLine) || \"Telegram note \" + (msg.message_id || \"\");\nvar summary = firstSentence(content);\nvar corePoint = summary;\nvar useFor = [\"later\"];\nif (type === \"idea\") { useFor = [\"presentation\", \"article\", \"thinking\"]; }\nif (type === \"question\") { useFor = [\"learning\", \"research\", \"thinking\"]; }\nif (type === \"article\" || type === \"video\") { useFor = [\"learning\", \"presentation\", \"reference\"]; }\nif (type === \"todo\") { useFor = [\"action\"]; }\n\nvar tags = [\"inbox/telegram\", type];\nif (url) { tags.push(\"link\"); }\nif (useFor.indexOf(\"presentation\") !== -1) { tags.push(\"presentation\"); }\n\nvar fileTitle = cleanTitle(summary || firstLine || type) || title;\nvar fileName = datePart + \" \" + timePart.split(\":\").join(\"-\") + \" \" + fileTitle + \".md\";\nvar fromName = \"unknown\";\nif (msg.from) {\n  fromName = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(\" \") || msg.from.username || \"unknown\";\n}\n\nvar out = [];\nout.push(\"---\");\nout.push(\"source: telegram\");\nout.push(\"type: \" + type);\nout.push(\"capture: \" + sourceKind);\nout.push(\"status: inbox\");\nout.push(\"title: \" + JSON.stringify(title));\nout.push(\"summary: \" + JSON.stringify(summary));\nout.push(\"core_point: \" + JSON.stringify(corePoint));\nout.push(\"created: \" + date.toISOString());\nout.push(\"local_time: \" + datePart + \" \" + timePart);\nout.push(\"telegram_message_id: \" + (msg.message_id || \"\"));\nout.push(\"telegram_chat_id: \" + ((msg.chat && msg.chat.id) || \"\"));\nout.push(\"from: \" + JSON.stringify(fromName));\nif (url) { out.push(\"url: \" + JSON.stringify(url)); }\nout.push(\"use_for:\");\nout = out.concat(yamlList(useFor));\nout.push(\"tags:\");\nout = out.concat(yamlList(tags));\nout.push(\"---\");\nout.push(\"\");\nout.push(\"# \" + title);\nout.push(\"\");\nout.push(\"## Samenvatting\");\nout.push(summary || \"Nog te verwerken.\");\nout.push(\"\");\nout.push(\"## Kern\");\nout.push(corePoint || \"Nog te verwerken.\");\nout.push(\"\");\nout.push(\"## Mogelijke toepassing\");\nout.push(useFor.join(\", \"));\nout.push(\"\");\nout.push(\"## Memo\");\nout.push(content);\nif (type === \"question\") {\n  out.push(\"\");\n  out.push(\"## Open vraag\");\n  out.push(content);\n}\n\nvar markdown = out.join(String.fromCharCode(10)) + String.fromCharCode(10);\nreturn [{ json: { fileName: fileName, title: title, type: type, summary: summary, core_point: corePoint, use_for: useFor, tags: tags, url: url }, binary: { data: { data: Buffer.from(markdown, \"utf8\").toString(\"base64\"), mimeType: \"text/markdown\", fileName: fileName, fileExtension: \"md\" } } }];"
+      },
+      "id": "253ea0b4-2686-41ff-913b-1fbc93ae8a6a",
+      "name": "Build Obsidian Markdown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "path": "=/Obsidian/Inbox/Telegram/{{$json.fileName}}",
+        "binaryData": true
+      },
+      "id": "7a5f24af-0224-4aa8-a776-bf075f4074c6",
+      "name": "Upload Note to Dropbox",
+      "type": "n8n-nodes-base.dropbox",
+      "typeVersion": 1,
+      "position": [
+        2352,
+        0
+      ],
+      "credentials": {
+        "dropboxApi": {
+          "id": "SfE9SNYsnonQ8cb1",
+          "name": "Dropbox account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $json.message || $json.edited_message || $json.channel_post;\n\nif (!msg || !msg.voice || !msg.voice.file_id) {\n  return [];\n}\n\nreturn [{\n  json: {\n    fileId: msg.voice.file_id,\n    originalMessage: msg,\n    originalUpdate: $json\n  }\n}];\n"
+      },
+      "id": "385513a5-f631-4e8a-950d-825653a12675",
+      "name": "Prepare Voice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.fileId }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1632,
+        224
+      ],
+      "id": "4fbc385d-e8ea-4666-8e1f-b04b3e0cc399",
+      "name": "Get a file",
+      "webhookId": "44caa98f-4fc9-4042-b691-357e52beba46",
+      "credentials": {
+        "telegramApi": {
+          "id": "40SHzIiYXiRGLVgX",
+          "name": "Obsi8Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1840,
+        224
+      ],
+      "id": "e468fa7a-ebc7-441a-8ca0-e758148ab617",
+      "name": "Transcribe a recording",
+      "credentials": {
+        "openAiApi": {
+          "id": "VbpDMZMo5Wwm27NI",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "var transcript = $json.text || $json.transcription || $json.transcript || \"\";\nif (!transcript && $json.data && typeof $json.data.text === \"string\") {\n  transcript = $json.data.text;\n}\nif (!transcript) {\n  transcript = JSON.stringify($json, null, 2);\n}\n\nvar msg = {};\ntry {\n  msg = $(\"Prepare Voice\").first().json.originalMessage || {};\n} catch (error) {\n  msg = {};\n}\n\nvar sourceKind = \"voice\";\nvar date = new Date((msg.date || Math.floor(Date.now() / 1000)) * 1000);\nvar formatter = new Intl.DateTimeFormat(\"sv-SE\", { timeZone: \"Europe/Amsterdam\", year: \"numeric\", month: \"2-digit\", day: \"2-digit\", hour: \"2-digit\", minute: \"2-digit\", second: \"2-digit\", hour12: false });\nvar formatted = formatter.format(date);\nvar datePart = formatted.slice(0, 10);\nvar timePart = formatted.slice(11, 19);\n\nfunction trimText(value) {\n  return String(value || \"\").trim();\n}\n\nfunction startsWithLower(value, prefix) {\n  return String(value || \"\").toLowerCase().indexOf(prefix) === 0;\n}\n\nfunction cleanTitle(value) {\n  var input = String(value || \"\");\n  var output = \"\";\n  for (var i = 0; i < input.length; i++) {\n    var ch = input.charAt(i);\n    var code = input.charCodeAt(i);\n    if (code < 32 || code > 126) {\n      continue;\n    }\n    if (code === 34 || code === 35 || code === 42 || code === 47 || code === 58 || code === 60 || code === 62 || code === 63 || code === 91 || code === 92 || code === 93 || code === 94 || code === 124) {\n      continue;\n    }\n    output += ch;\n  }\n  while (output.indexOf(\"  \") !== -1) {\n    output = output.split(\"  \").join(\" \");\n  }\n  return output.trim().slice(0, 80);\n}\n\nfunction firstSentence(value) {\n  var text = trimText(value).split(String.fromCharCode(10)).join(\" \");\n  while (text.indexOf(\"  \") !== -1) {\n    text = text.split(\"  \").join(\" \");\n  }\n  var stops = [\". \", \"? \", \"! \"];\n  var end = -1;\n  for (var i = 0; i < stops.length; i++) {\n    var pos = text.indexOf(stops[i]);\n    if (pos !== -1 && (end === -1 || pos < end)) {\n      end = pos + 1;\n    }\n  }\n  if (end === -1 || end > 240) {\n    return text.slice(0, 240).trim();\n  }\n  return text.slice(0, end).trim();\n}\n\nfunction findUrl(value) {\n  var pieces = String(value || \"\").split(\" \");\n  for (var i = 0; i < pieces.length; i++) {\n    var p = pieces[i].trim();\n    if (p.indexOf(\"http://\") === 0 || p.indexOf(\"https://\") === 0) {\n      while (p.endsWith(\".\") || p.endsWith(\",\") || p.endsWith(\")\")) {\n        p = p.slice(0, -1);\n      }\n      return p;\n    }\n  }\n  return \"\";\n}\n\nfunction extractManualTitleAndContent(value) {\n  var allText = String(value || \"\");\n  var lowerAll = trimText(allText).toLowerCase();\n  var prefixes = [\"de titel is\", \"titel\", \"title\"];\n  for (var prefIndex = 0; prefIndex < prefixes.length; prefIndex++) {\n    var prefix = prefixes[prefIndex];\n    if (lowerAll.indexOf(prefix) === 0) {\n      var rest = trimText(allText.slice(prefix.length));\n      while (rest.charAt(0) === \":\" || rest.charAt(0) === \"-\" || rest.charAt(0) === \"=\") {\n        rest = trimText(rest.slice(1));\n      }\n      var cut = rest.indexOf(String.fromCharCode(10));\n      var dot = rest.indexOf(\". \");\n      if (cut === -1 || (dot !== -1 && dot < cut)) {\n        cut = dot === -1 ? cut : dot + 1;\n      }\n      var titlePart = cut === -1 ? rest : rest.slice(0, cut);\n      var contentPart = cut === -1 ? \"\" : rest.slice(cut);\n      titlePart = trimText(titlePart);\n      contentPart = trimText(contentPart);\n      if (titlePart.endsWith(\".\")) {\n        titlePart = trimText(titlePart.slice(0, -1));\n      }\n      return { manualTitle: titlePart, content: contentPart };\n    }\n  }\n  var linesIn = allText.split(String.fromCharCode(10));\n  var manualTitle = \"\";\n  var contentLines = [];\n  for (var i = 0; i < linesIn.length; i++) {\n    var line = linesIn[i];\n    var lowered = trimText(line).toLowerCase();\n    if (!manualTitle && (lowered.indexOf(\"titel:\") === 0 || lowered.indexOf(\"title:\") === 0 || lowered.indexOf(\"titel :\") === 0 || lowered.indexOf(\"title :\") === 0)) {\n      manualTitle = trimText(line.slice(line.indexOf(\":\") + 1));\n    } else {\n      contentLines.push(line);\n    }\n  }\n  return { manualTitle: manualTitle, content: trimText(contentLines.join(String.fromCharCode(10))) };\n}\n\nfunction yamlList(items) {\n  var out = [];\n  for (var i = 0; i < items.length; i++) {\n    out.push(\"  - \" + items[i]);\n  }\n  return out;\n}\n\nvar extractedTitle = extractManualTitleAndContent(transcript);\nvar manualTitle = extractedTitle.manualTitle;\nvar content = extractedTitle.content;\nvar contentLines = content.split(String.fromCharCode(10));\nvar firstLine = trimText(contentLines[0]);\n\nvar type = \"memo\";\nvar prefixMap = [\n  [\"idee:\", \"idea\"],\n  [\"idea:\", \"idea\"],\n  [\"vraag:\", \"question\"],\n  [\"question:\", \"question\"],\n  [\"artikel:\", \"article\"],\n  [\"article:\", \"article\"],\n  [\"video:\", \"video\"],\n  [\"memo:\", \"memo\"],\n  [\"reflectie:\", \"reflection\"],\n  [\"todo:\", \"todo\"]\n];\nfor (var p = 0; p < prefixMap.length; p++) {\n  if (startsWithLower(firstLine, prefixMap[p][0])) {\n    type = prefixMap[p][1];\n    content = trimText(firstLine.slice(prefixMap[p][0].length) + String.fromCharCode(10) + contentLines.slice(1).join(String.fromCharCode(10)));\n    firstLine = trimText(content.split(String.fromCharCode(10))[0]);\n    break;\n  }\n}\n\nvar url = findUrl(content);\nif (url) {\n  var lowerUrl = url.toLowerCase();\n  if (lowerUrl.indexOf(\"youtube.com\") !== -1 || lowerUrl.indexOf(\"youtu.be\") !== -1 || lowerUrl.indexOf(\"vimeo.com\") !== -1) {\n    type = \"video\";\n  } else if (type === \"memo\") {\n    type = \"article\";\n  }\n}\n\nvar title = cleanTitle(manualTitle || firstLine) || \"Voice note \" + (msg.message_id || \"\");\nvar summary = firstSentence(content);\nvar corePoint = summary;\nvar useFor = [\"later\"];\nif (type === \"idea\") { useFor = [\"presentation\", \"article\", \"thinking\"]; }\nif (type === \"question\") { useFor = [\"learning\", \"research\", \"thinking\"]; }\nif (type === \"article\" || type === \"video\") { useFor = [\"learning\", \"presentation\", \"reference\"]; }\nif (type === \"todo\") { useFor = [\"action\"]; }\n\nvar tags = [\"inbox/telegram\", type, \"audio/transcript\"];\nif (url) { tags.push(\"link\"); }\nif (useFor.indexOf(\"presentation\") !== -1) { tags.push(\"presentation\"); }\n\nvar fileTitle = cleanTitle(summary || firstLine || type) || title;\nvar fileName = datePart + \" \" + timePart.split(\":\").join(\"-\") + \" \" + fileTitle + \".md\";\nvar fromName = \"unknown\";\nif (msg.from) {\n  fromName = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(\" \") || msg.from.username || \"unknown\";\n}\n\nvar out = [];\nout.push(\"---\");\nout.push(\"source: telegram\");\nout.push(\"type: \" + type);\nout.push(\"capture: \" + sourceKind);\nout.push(\"status: inbox\");\nout.push(\"title: \" + JSON.stringify(title));\nout.push(\"summary: \" + JSON.stringify(summary));\nout.push(\"core_point: \" + JSON.stringify(corePoint));\nout.push(\"created: \" + date.toISOString());\nout.push(\"local_time: \" + datePart + \" \" + timePart);\nout.push(\"telegram_message_id: \" + (msg.message_id || \"\"));\nout.push(\"telegram_chat_id: \" + ((msg.chat && msg.chat.id) || \"\"));\nout.push(\"from: \" + JSON.stringify(fromName));\nif (url) { out.push(\"url: \" + JSON.stringify(url)); }\nout.push(\"use_for:\");\nout = out.concat(yamlList(useFor));\nout.push(\"tags:\");\nout = out.concat(yamlList(tags));\nout.push(\"---\");\nout.push(\"\");\nout.push(\"# \" + title);\nout.push(\"\");\nout.push(\"## Samenvatting\");\nout.push(summary || \"Nog te verwerken.\");\nout.push(\"\");\nout.push(\"## Kern\");\nout.push(corePoint || \"Nog te verwerken.\");\nout.push(\"\");\nout.push(\"## Mogelijke toepassing\");\nout.push(useFor.join(\", \"));\nout.push(\"\");\nout.push(\"## Transcript\");\nout.push(content);\nif (type === \"question\") {\n  out.push(\"\");\n  out.push(\"## Open vraag\");\n  out.push(content);\n}\n\nvar markdown = out.join(String.fromCharCode(10)) + String.fromCharCode(10);\nreturn [{ json: { fileName: fileName, title: title, type: type, summary: summary, core_point: corePoint, use_for: useFor, tags: tags, url: url }, binary: { data: { data: Buffer.from(markdown, \"utf8\").toString(\"base64\"), mimeType: \"text/markdown\", fileName: fileName, fileExtension: \"md\" } } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2048,
+        224
+      ],
+      "id": "13d658cd-39b3-4a92-adf2-3df99dc4b6aa",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{ 'Opgeslagen in Obsidian/Dropbox: ' + ($json.name || $json.path_display || 'notitie') }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        0
+      ],
+      "id": "eff5a215-3e29-4157-9c80-6af774fc1bd6",
+      "name": "Send a text message",
+      "webhookId": "4911f591-8177-4364-96be-91b0b2023f40",
+      "credentials": {
+        "telegramApi": {
+          "id": "40SHzIiYXiRGLVgX",
+          "name": "Obsi8Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "reMarkable PDF preview analysis\n\nConnect your existing Telegram Trigger to Prepare Remarkable PDF Preview.\n\nThis route is for scanned/handwritten reMarkable PDFs:\n- uses the Telegram PDF preview image for OpenAI visual analysis\n- creates an Obsidian Markdown note\n- links to the original PDF saved by the existing PDF route\n\nKeep the original PDF upload route active. Disable or remove the old Extract Remarkable PDF Text markdown branch to avoid duplicate notes.",
+        "height": 260,
+        "width": 420,
+        "color": 4
+      },
+      "id": "68552a9f-a33a-47ad-95f7-da3af48284d3",
+      "name": "PDF preview analysis note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1824,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst input = item.json || {};\nconst message = input.message || input.edited_message || input.channel_post || input;\nconst document = message.document || {};\nconst thumb = document.thumbnail || {};\nconst caption = String(message.caption || '').trim();\nconst mimeType = String(document.mime_type || '').toLowerCase();\nconst originalName = String(document.file_name || 'remarkable.pdf');\nconst isPdf = document.file_id && (mimeType === 'application/pdf' || originalName.toLowerCase().endsWith('.pdf'));\n\nif (!isPdf || !thumb.file_id) {\n  return [];\n}\n\nfunction extractManualTitle(value) {\n  const text = String(value || '').trim();\n  const match = text.match(/^\\s*(?:de titel is|titel|title)\\s*[:\\-=]?\\s*(.+?)(?:\\r?\\n|\\.\\s+|$)/i);\n  if (!match) return { title: '', rest: text };\n  const title = match[1].trim().replace(/\\.$/, '').trim();\n  const rest = text.slice(match[0].length).trim();\n  return { title, rest };\n}\n\nfunction slugify(value) {\n  return String(value || 'remarkable-pdf')\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/^-+|-+$/g, '')\n    .slice(0, 70) || 'remarkable-pdf';\n}\n\nconst extracted = extractManualTitle(caption);\nconst now = new Date();\nconst datePart = now.toISOString().slice(0, 10);\nconst timePart = now.toTimeString().slice(0, 5).replace(':', '');\nconst baseName = slugify(extracted.title || caption || originalName.replace(/\\.pdf$/i, '') || 'remarkable-pdf');\nconst pdfFileName = `${datePart}-${timePart}-${baseName}.pdf`;\nconst previewFileName = `${datePart}-${timePart}-${baseName}-preview.jpg`;\n\nreturn [{\n  json: {\n    fileId: thumb.file_id,\n    pdfFileId: document.file_id,\n    originalFileName: originalName,\n    pdfFileName,\n    previewFileName,\n    pdfWikiLink: `[[Remarkable/${pdfFileName}]]`,\n    previewWikiLink: `![[Remarkable/${previewFileName}]]`,\n    caption,\n    cleanCaption: extracted.rest,\n    manualTitle: extracted.title,\n    chatId: message.chat && message.chat.id,\n    messageId: message.message_id,\n    from: message.from,\n    created: now.toISOString(),\n    localTime: now.toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' })\n  }\n}];"
+      },
+      "id": "cabdf6e5-177e-4453-8211-5b49986480a5",
+      "name": "Prepare Remarkable PDF Preview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.pdfFileId }}",
+        "additionalFields": {}
+      },
+      "id": "c3c1b7c2-9b75-469e-b505-1f6b37f50582",
+      "name": "Get Remarkable PDF Preview",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1632,
+        432
+      ],
+      "webhookId": "18b24d91-a96e-4396-b22e-a60ae8fd67c1",
+      "credentials": {
+        "telegramApi": {
+          "id": "40SHzIiYXiRGLVgX",
+          "name": "Obsi8Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "=/Obsidian/Attachments/Remarkable/{{$('Prepare Remarkable PDF Preview').first().json.pdfFileName}}",
+        "binaryData": true
+      },
+      "id": "45e71a2c-e1f1-4b4b-b3aa-7306908958ea",
+      "name": "Upload Remarkable PDF Original",
+      "type": "n8n-nodes-base.dropbox",
+      "typeVersion": 1,
+      "position": [
+        3184,
+        1072
+      ],
+      "credentials": {
+        "dropboxApi": {
+          "id": "SfE9SNYsnonQ8cb1",
+          "name": "Dropbox account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $('Prepare Remarkable PDF Preview').first().json.pdfFileId }}",
+        "additionalFields": {}
+      },
+      "id": "0f40d625-c937-41c9-9a38-7dceefb4d0f2",
+      "name": "Get Remarkable PDF Original File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2368,
+        1072
+      ],
+      "webhookId": "61d68df6-8eef-4129-a2b6-0b173b636ac9",
+      "credentials": {
+        "telegramApi": {
+          "id": "40SHzIiYXiRGLVgX",
+          "name": "Obsi8Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.bodyJson || JSON.stringify({ model: 'gpt-4o', input: [{ role: 'user', content: [{ type: 'input_text', text: 'SKIP_DIRECT_REMARKABLE_BRANCH_DO_NOT_WRITE' }] }], temperature: 0, max_output_tokens: 20 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3184,
+        1280
+      ],
+      "name": "Analyze Remarkable Full PDF",
+      "id": "56c5f42f-3af4-49af-aac8-967ae5e68fda",
+      "credentials": {
+        "openAiApi": {
+          "id": "VbpDMZMo5Wwm27NI",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json || {};\nconst responseTextForSkip = JSON.stringify(response);\nif (responseTextForSkip.includes('SKIP_DIRECT_REMARKABLE_BRANCH_DO_NOT_WRITE')) {\n  return [];\n}\n\nfunction fromNode(name) {\n  try {\n    return $(name).first().json || {};\n  } catch (error) {\n    return {};\n  }\n}\n\nfunction getValue(obj, path) {\n  return path.split('.').reduce(function(current, key) {\n    if (current && Object.prototype.hasOwnProperty.call(current, key)) return current[key];\n    return undefined;\n  }, obj);\n}\n\nfunction cleanTitleLine(value) {\n  return String(value || '')\n    .replace(/^\\s*titel\\s*:?\\s*/i, '')\n    .replace(/^\\s*title\\s*:?\\s*/i, '')\n    .split('\\n')[0]\n    .trim();\n}\n\nfunction extractText(value) {\n  if (typeof value.output_text === 'string') return value.output_text;\n  if (Array.isArray(value.output)) {\n    const parts = [];\n    for (const outputItem of value.output) {\n      if (typeof outputItem.content === 'string') parts.push(outputItem.content);\n      if (Array.isArray(outputItem.content)) {\n        for (const contentItem of outputItem.content) {\n          if (typeof contentItem.text === 'string') parts.push(contentItem.text);\n          if (typeof contentItem.output_text === 'string') parts.push(contentItem.output_text);\n        }\n      }\n    }\n    if (parts.length) return parts.join('\\n\\n');\n  }\n  if (Array.isArray(value.choices)) {\n    return value.choices.map(function(choice) {\n      if (choice.message && choice.message.content) return choice.message.content;\n      if (choice.text) return choice.text;\n      return '';\n    }).filter(Boolean).join('\\n\\n');\n  }\n  return '';\n}\n\nfunction slugify(value) {\n  return String(value || '')\n    .normalize('NFKD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/^-+|-+$/g, '')\n    .slice(0, 80) || 'remarkable-notitie';\n}\n\nfunction dateStamp(value) {\n  const date = value ? new Date(value) : new Date();\n  const pad = number => String(number).padStart(2, '0');\n  return [date.getFullYear(), pad(date.getMonth() + 1), pad(date.getDate())].join('-') + '-' + pad(date.getHours()) + pad(date.getMinutes());\n}\n\nlet analysis = extractText(response).trim();\nanalysis = analysis.replace(/^\\`\\`\\`(?:markdown|md)?\\s*/i, '').replace(/\\`\\`\\`$/i, '').trim();\nanalysis = analysis.replace(/<br\\s*\\/?>/gi, '\\n').replace(/<\\/?(?:html|body|article|section|main|div|p)[^>]*>/gi, '\\n').trim();\nanalysis = analysis.replace(/^#\\s*File\\s*\\d+\\s*\\n+/i, '').trim();\nanalysis = analysis.replace(/^#\\s*file[_ -]?\\d+\\s*\\n+/i, '').trim();\n\nif (!analysis) {\n  throw new Error('OpenAI gaf geen analyse terug voor het reMarkable PDF-document.');\n}\n\nconst telegram = fromNode('Telegram Trigger');\nconst oldMeta = fromNode('Prepare Remarkable PDF Preview');\nconst ocrPrepare = fromNode('Prepare Remarkable OCR Request');\nconst ocrMeta = ocrPrepare.meta || {};\nconst meta = Object.assign({}, ocrMeta, oldMeta);\n\nconst telegramDocumentName = getValue(telegram, 'message.document.file_name') || getValue(telegram, 'message.document.fileName');\nconst telegramCaption = getValue(telegram, 'message.caption') || '';\nconst messageDate = getValue(telegram, 'message.date');\nconst sourcePdfName = telegramDocumentName || oldMeta.fileName || oldMeta.originalFileName || ocrMeta.fileName || ocrMeta.originalFileName || 'remarkable.pdf';\n\nconst filenameTitle = String(sourcePdfName).replace(/\\.pdf$/i, '');\nconst captionTitle = cleanTitleLine(telegramCaption);\nconst titleSource = captionTitle || oldMeta.title || oldMeta.caption || oldMeta.fileTitle || filenameTitle || ocrMeta.title || 'reMarkable notitie';\nconst rawTitle = String(titleSource)\n  .replace(/^\\d{4}-\\d{2}-\\d{2}-\\d{4}-/i, '')\n  .replace(/[-_]+/g, ' ')\n  .trim();\nconst title = rawTitle || 'reMarkable notitie';\nconst created = meta.created || (messageDate ? new Date(messageDate * 1000).toISOString() : new Date().toISOString());\nconst localTime = meta.local_time || new Date(created).toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' });\nconst mdFileName = dateStamp(created) + '-' + slugify(title) + '.md';\nconst originalPdfName = dateStamp(created) + '-' + slugify(title) + '.pdf';\n\nconst lines = [\n  '---',\n  'source: \"telegram\"',\n  'type: \"remarkable_pdf\"',\n  'capture: \"remarkable_full_pdf_ocr\"',\n  'status: \"inbox\"',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'created: \"' + created + '\"',\n  'local_time: \"' + localTime + '\"'\n];\nconst chatId = meta.telegram_chat_id || getValue(telegram, 'message.chat.id');\nconst messageId = meta.telegram_message_id || getValue(telegram, 'message.message_id');\nif (chatId) lines.push('telegram_chat_id: \"' + chatId + '\"');\nif (messageId) lines.push('telegram_message_id: \"' + messageId + '\"');\nlines.push('attachment: \"Remarkable/' + originalPdfName + '\"');\nlines.push('tags: [\"capture\", \"telegram\", \"remarkable\", \"ocr\", \"notes\"]');\nlines.push('---', '', '# ' + title, '', '## Originele bestanden', '- PDF: [[Remarkable/' + originalPdfName + ']]', '', analysis);\n\nconst markdown = lines.join('\\n');\n\nreturn [{\n  json: {\n    fileName: mdFileName,\n    title,\n    markdown,\n    originalPdfName\n  },\n  binary: {\n    data: {\n      data: Buffer.from(markdown, 'utf8').toString('base64'),\n      mimeType: 'text/markdown',\n      fileName: mdFileName,\n      fileExtension: 'md'\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3824,
+        1280
+      ],
+      "name": "Build Remarkable OCR Markdown",
+      "id": "82c073b0-73a0-4b03-895f-ae73e11f29f3"
+    },
+    {
+      "parameters": {
+        "path": "={{ '/Obsidian/Inbox/Remarkable/' + $json.fileName }}",
+        "binaryData": true
+      },
+      "type": "n8n-nodes-base.dropbox",
+      "typeVersion": 1,
+      "position": [
+        4208,
+        1280
+      ],
+      "name": "Upload Remarkable OCR Markdown",
+      "id": "57756776-f7e7-4b59-91e9-c2f7fe87ba05",
+      "credentials": {
+        "dropboxApi": {
+          "id": "SfE9SNYsnonQ8cb1",
+          "name": "Dropbox account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binaryMeta = item.binary && item.binary.data;\nif (!binaryMeta) {\n  throw new Error('Geen PDF-binary gevonden om naar OpenAI te sturen.');\n}\n\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst pdfBase64 = buffer.toString('base64');\n\nfunction getValue(obj, path) {\n  return path.split('.').reduce(function(current, key) {\n    if (current && Object.prototype.hasOwnProperty.call(current, key)) return current[key];\n    return undefined;\n  }, obj);\n}\n\nfunction slugify(value) {\n  return String(value || '')\n    .normalize('NFKD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/^-+|-+$/g, '')\n    .slice(0, 80) || 'remarkable-notitie';\n}\n\nfunction cleanTitleLine(value) {\n  return String(value || '')\n    .replace(/^\\s*titel\\s*:?\\s*/i, '')\n    .replace(/^\\s*title\\s*:?\\s*/i, '')\n    .split('\\n')[0]\n    .trim();\n}\n\nlet telegram = {};\ntry { telegram = $('Telegram Trigger').first().json || {}; } catch (error) {}\n\nconst caption = getValue(telegram, 'message.caption') || getValue(telegram, 'edited_message.caption') || '';\nconst documentName = getValue(telegram, 'message.document.file_name') || getValue(telegram, 'edited_message.document.file_name') || binaryMeta.fileName || 'remarkable.pdf';\nconst rawTitle = cleanTitleLine(caption) || String(documentName).replace(/\\.pdf$/i, '').replace(/[_-]+/g, ' ');\nconst title = rawTitle || 'reMarkable notitie';\nconst now = new Date();\nconst pad = n => String(n).padStart(2, '0');\nconst stamp = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + '-' + pad(now.getHours()) + pad(now.getMinutes());\nconst slug = slugify(title);\nconst originalPdfName = stamp + '-' + slug + '.pdf';\nconst mdFileName = stamp + '-' + slug + '.md';\n\nconst prompt = [\n  'Je analyseert een volledig reMarkable-PDF document met handgeschreven notities, schetsen en eventueel ingeplakte afbeeldingen.',\n    'Lees handschrift, getypte tekst, pijlen en kaders zo goed mogelijk. Sla losse tekeningen/schetsen/illustraties over: analyseer of beschrijf de inhoud daarvan niet, noteer alleen dat er een tekening aanwezig is.',\n  'Gebruik alleen wat zichtbaar is. Verzin geen ontbrekende tekst, meetings of taken.',\n    'Doe altijd een beste-poging tot transcriptie, ook bij gekleurde schetsen of rommelig handschrift. Gebruik onzeker/onleesbaar alleen als echt niets te onderscheiden is, en beschrijf het element dan toch zo goed mogelijk in plaats van het over te slaan.',\n  '',\n  'Notatie systeem:',\n '- Onderstreepte tekst = titel. De EERSTE onderstreepte tekst in het document is de hoofdtitel en wordt Markdown H1 (één #). Elke volgende onderstreepte tekst is een subtitel en wordt Markdown H2 (##).',\n  '- Een sterretje bij een regel = werknotitie. Schrijf dit in de markdown als bullet met een liggend streepje \"- \", gebruik nooit een letterlijk sterretje.',\n  '- Een leeg vierkantje bij een regel = actiepunt.',\n  '- Een volledige horizontale streep over de regel = start van een nieuwe sectie zonder eigen titel; bedenk zelf een korte passende sectienaam op basis van de notities die volgen',\n  '',\n  'Maak nette Obsidian Markdown in het Nederlands.',\n  'Structuur:',\n '1. Begin met een sectie \"## Korte samenvatting\" gevolgd door een lopende tekst van 2-4 zinnen (geen bullets).',\n  '2. Headers per sectie, met de werknotities gegroepeerd op basis van nabijheid op de pagina',\n  '3. Actiepunten: verzamel alle regels met een leeg vierkantje in een aparte sectie. Gebruik voor elke taak exact het formaat - [ ] Sectienaam: actiegerichte zin. Laat de vierkante haakjes nooit weg.',\n  '4. Illustraties: geen inhoudelijke analyse. Zet alleen een korte regel per sectie met een tekening, bijvoorbeeld Tekening aanwezig, zie origineel PDF. Ga niet in op vorm, kleur of betekenis.',\n  '',\n  'Voeg geen HTML, JSON of code fences toe.',\n  'Zet geen lege regel tussen een header (# of ##) en de bullet- of taken-lijst die daarna volgt.',\n  'Begin niet met bestandsnamen zoals File 16 of page headings. Titelcontext: ' + title\n  ].join('\\n');\n\nconst body = {\n  model: 'gpt-5.4',\n  input: [{\n    role: 'user',\n    content: [\n      { type: 'input_file', filename: documentName || originalPdfName, file_data: 'data:application/pdf;base64,' + pdfBase64 },\n      { type: 'input_text', text: prompt }\n      ]\n  }],\n  temperature: 0.1,\n  max_output_tokens: 4000\n};\n\nconst meta = {\n  title,\n  caption,\n  documentName,\n  originalPdfName,\n  mdFileName,\n  telegram_chat_id: getValue(telegram, 'message.chat.id') || getValue(telegram, 'edited_message.chat.id'),\n  telegram_message_id: getValue(telegram, 'message.message_id') || getValue(telegram, 'edited_message.message_id')\n};\n\nreturn [{\n  json: {\n    body,\n    bodyJson: JSON.stringify(body),\n    meta,\n    fileName: mdFileName,\n    title,\n    originalPdfName\n  },\n  binary: item.binary\n}];"
+      },
+      "id": "426f1d30-3dbb-4a76-aad0-a8ab3cccbef5",
+      "name": "Prepare PDF Render Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2672,
+        1280
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{  $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{  'reMarkable-notitie verwerkt: ' + $('Build Remarkable OCR Markdown').first().json.title + ' - opgeslagen in Obsidian/Inbox/Remarkable/' + $json.name }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4416,
+        1280
+      ],
+      "id": "8832e176-1c17-443b-9637-198f2fc6aa53",
+      "name": "Bevestig Remarkable notitie opgeslagen",
+      "webhookId": "5f33a3bd-2c9a-4e6a-96bb-fa3ce6ea3ca3",
+      "credentials": {
+        "telegramApi": {
+          "id": "40SHzIiYXiRGLVgX",
+          "name": "Obsi8Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const markdown = item.json.markdown || '';\n  const title = item.json.title || '';\n  const lines = markdown.split('\\n');\n  for (const line of lines) {\n    const trimmed = line.trim();\n    const markerIndex = trimmed.indexOf('[ ]');\n    if (trimmed.indexOf('-') === 0 && markerIndex > -1) {\n      const rest = trimmed.slice(markerIndex + 3).trim();\n      const sep = rest.indexOf(':');\n      const section = sep > -1 ? rest.slice(0, sep).trim() : '';\n      const text = sep > -1 ? rest.slice(sep + 1).trim() : rest;\n      const content = (section ? section + ': ' : '') + text + ' #reMarkable';\n      results.push({ json: { section: section, text: text, content: content, sourceTitle: title } });\n      \n    }\n  }\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3280,
+        1632
+      ],
+      "id": "961757a9-5b63-4d8f-98c0-e2f899941784",
+      "name": "Extract Actiepunten"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.todoist.com/api/v1/tasks/quick",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer e7e5bdfcbea9afe26f4bde4737919bc5243cae80"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{  $json.content }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3808,
+        1552
+      ],
+      "id": "bd1c72df-597d-4584-8021-81b9d5505d02",
+      "name": "Maak Todoist Taak (reMarkable)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst input = item.json || {};\nconst message = input.message || input.edited_message || input.channel_post || input;\nconst document = message.document || {};\nconst caption = String(message.caption || '').trim();\nconst mimeType = String(document.mime_type || '').toLowerCase();\nconst originalName = String(document.file_name || 'remarkable.png');\nconst isPng = document.file_id && (mimeType === 'image/png' || originalName.toLowerCase().endsWith('.png'));\nif (!isPng) { return []; }\nfunction extractManualTitle(value) {\n  const text = String(value || '').trim();\n  const match = text.match(/^\\s*(?:de titel is|titel|title)\\s*[:\\-=]?\\s*(.+?)(?:\\r?\\n|\\s+$|$)/i);\n  if (!match) return { title: '', rest: text };\n  const title = match[1].trim().replace(/\\.$/, '').trim();\n  const rest = text.slice(match[0].length).trim();\n  return { title, rest };\n}\nfunction slugify(value) {\n  return String(value || '')\n  .toLowerCase()\n  .normalize('NFKD')\n  .replace(/[̀-ͯ]/g, '')\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-+|-+$/g, '') || 'remarkable-png';\n}\nconst extracted = extractManualTitle(caption);\nconst now = new Date();\nconst pad = (n) => String(n).padStart(2, '0');\nconst datePart = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate());\nconst timePart = pad(now.getHours()) + pad(now.getMinutes());\nconst baseName = slugify(extracted.title || caption || originalName.replace(/\\.png$/i, '') || 'remarkable-png');\nconst pngFileName = datePart + '-' + timePart + '-' + baseName + '.png';\nreturn [{\n  json: {\n    imageFileId: document.file_id,\n    originalFileName: originalName,\n    pngFileName,\n    caption,\n    cleanCaption: extracted.rest,\n    manualTitle: extracted.title,\n    chatId: message.chat && message.chat.id,\n    messageId: message.message_id,\n    from: message.from,\n    created: now.toISOString(),\n    localTime: now.toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        784
+      ],
+      "id": "35f92281-db07-4e39-b086-ac95cebb1ccb",
+      "name": "Prepare Remarkable PNG Upload"
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "=={{  $json.imageFileId  }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3056,
+        368
+      ],
+      "id": "58fe8897-5f55-4ed0-a0ce-bab8429ed99c",
+      "name": "Get Remarkable PNG File",
+      "webhookId": "5606f204-08b4-46a7-b3c4-edfd207dada0",
+      "credentials": {
+        "telegramApi": {
+          "id": "5Oekwe6Qte87wOMU",
+          "name": "ToDo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binaryMeta = item.binary && item.binary.data;\nif (!binaryMeta) {\n  throw new Error('Geen PNG-binary gevonden om naar OpenAI te sturen.');\n}\n\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst pngBase64 = buffer.toString('base64');\n\nfunction getValue(obj, path) {\n  return path.split('.').reduce(function(current, key) {\n    if (current && Object.prototype.hasOwnProperty.call(current, key)) return current[key];\n    return undefined;\n  }, obj);\n}\n\nfunction slugify(value) {\n  return String(value || '')\n  .normalize('NFKD')\n  .replace(/[̀-ͯ]/g, '')\n  .toLowerCase()\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-+|-+$/g, '')\n  .slice(0, 80) || 'remarkable-notitie';\n}\n\nfunction cleanTitleLine(value) {\n  return String(value || '')\n  .replace(/^\\s*titel\\s*:?\\s*/i, '')\n  .replace(/^\\s*title\\s*:?\\s*/i, '')\n  .split('\\n')[0]\n  .trim();\n}\nlet telegram = {};\ntry { telegram = $('Telegram Trigger').first().json || {}; } catch (error) {}\n\nconst caption = getValue(telegram, 'message.caption') || getValue(telegram, 'edited_message.caption') || '';\nconst documentName = getValue(telegram, 'message.document.file_name') || getValue(telegram, 'edited_message.document.file_name') || binaryMeta.fileName || 'remarkable.png';\nconst rawTitle = cleanTitleLine(caption) || String(documentName).replace(/\\.png$/i, '').replace(/[_-]+/g, ' ');\nconst title = rawTitle || 'reMarkable notitie';\nconst now = new Date();\nconst pad = (n) => String(n).padStart(2, '0');\nconst stamp = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + '-' + pad(now.getHours()) + pad(now.getMinutes());\nconst slug = slugify(title);\nconst originalPngName = stamp + '-' + slug + '.png';\nconst mdFileName = stamp + '-' + slug + '.md';\nconst prompt = [\n  'Je analyseert een volledige reMarkable-afbeelding met handgeschreven notities, schetsen en eventueel ingeplakte afbeeldingen.',\n  'Lees handschrift, getypte tekst, pijlen en kaders zo goed mogelijk. Sla losse tekeningen/schetsen/illustraties over: analyseer of beschrijf de inhoud daarvan niet, noteer alleen dat er een tekening aanwezig is.',\n  'Gebruik alleen wat zichtbaar is. Verzin geen ontbrekende tekst, meetings of taken.',\n  'Doe altijd een beste-poging tot transcriptie, ook bij gekleurde schetsen of rommelig handschrift. Gebruik onzeker/onleesbaar alleen als echt niets te onderscheiden is, en beschrijf het element dan toch zo goed mogelijk in plaats van het over te slaan.',\n  '',\n  'Notatie systeem:',\n  '- Een sterretje bij een regel = werknotitie',\n  '- Een leeg vierkantje bij een regel = actiepunt',\n  '- Dubbel onderstreepte tekst = hoofdtitel van het document',\n  '- Enkel onderstreepte tekst = sectie binnen het document, wordt een header',\n  '- Een volledige horizontale streep over de regel = start van een nieuwe sectie zonder eigen titel; bedenk zelf een korte passende sectienaam op basis van de notities die volgen',\n  '',\n  'Maak nette Obsidian Markdown in het Nederlands.',\n  'Structuur:',\n  '1. Korte samenvatting',\n  '2. Headers per sectie, met de werknotities gegroepeerd op basis van nabijheid op de pagina',\n  '3. Actiepunten: verzamel alle regels met een leeg vierkantje in een aparte sectie als Markdown-taken. Zet per taak eerst de sectienaam en een dubbele punt, dan een duidelijke, actiegerichte zin.',\n  '4. Illustraties: geen inhoudelijke analyse. Zet alleen een korte regel per sectie met een tekening, bijvoorbeeld \"Tekening aanwezig, zie origineel.\" Ga niet in op vorm, kleur of betekenis.',\n  '',\n  'Voeg geen HTML, JSON of code fences toe.',\n  'Begin niet met bestandsnamen zoals File 16 of page headings. Titelcontext: ' + title\n  ].join('\\n');\n\nconst body = {\n  model: 'gpt-5.4',\n  input: [{\n    role: 'user',\n    content: [\n      { type: 'input_image', image_url: 'data:image/png;base64,' + pngBase64 },\n      { type: 'input_text', text: prompt }\n    ],\n  }],\n  temperature: 0.1,\n  max_output_tokens: 4000\n}\n\nconst meta = {\n  title,\n  caption,\n  documentName,\n  originalPngName,\n  mdFileName,\n  telegram_chat_id: getValue(telegram, 'message.chat.id') || getValue(telegram, 'edited_message.chat.id'),\n  telegram_message_id: getValue(telegram, 'message.message_id') || getValue(telegram, 'edited_message.message_id')\n}\n\nreturn [{\n  json: {\n    body,\n    bodyJson: JSON.stringify(body),\n    meta,\n    fileName: mdFileName,\n    title,\n    originalPngName\n  },\n  binary: item.binary\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3984,
+        368
+      ],
+      "id": "ca989eab-bc57-499c-80ed-a4b24dc31c0c",
+      "name": "Prepare PNG Render Command"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json || {};\nconst responseTextForSkip = JSON.stringify(response);\nif (responseTextForSkip.includes('SKIP_DIRECT_REMARKABLE_BRANCH_DO_NOT_WRITE')) {\n  return [];\n}\n\nfunction fromNode(name) {\n  try {\n    return $(name).first().json || {};\n  } catch (error) {\n    return {};\n  }\n}\n\nfunction getValue(obj, path) {\n  return path.split('.').reduce(function(current, key) {\n    if (current && Object.prototype.hasOwnProperty.call(current, key)) return current[key];\n    return undefined;\n  }, obj);\n}\n\nfunction cleanTitleLine(value) {\n  return String(value || '')\n    .replace(/^\\s*titel\\s*:?\\s*/i, '')\n    .replace(/^\\s*title\\s*:?\\s*/i, '')\n    .split('\\n')[0]\n    .trim();\n}\n\nfunction extractText(value) {\n  if (typeof value.output_text === 'string') return value.output_text;\n  if (Array.isArray(value.output)) {\n    const parts = [];\n    for (const outputItem of value.output) {\n      if (typeof outputItem.content === 'string') parts.push(outputItem.content);\n      if (Array.isArray(outputItem.content)) {\n        for (const contentItem of outputItem.content) {\n          if (typeof contentItem.text === 'string') parts.push(contentItem.text);\n          if (typeof contentItem.output_text === 'string') parts.push(contentItem.output_text);\n        }\n      }\n    }\n    if (parts.length) return parts.join('\\n\\n');\n  }\n  if (Array.isArray(value.choices)) {\n    return value.choices.map(function(choice) {\n      if (choice.message && choice.message.content) return choice.message.content;\n      if (choice.text) return choice.text;\n      return '';\n    }).filter(Boolean).join('\\n\\n');\n  }\n  return '';\n}\n\nfunction slugify(value) {\n  return String(value || '')\n    .normalize('NFKD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/^-+|-+$/g, '')\n    .slice(0, 80) || 'remarkable-notitie';\n}\n\nfunction dateStamp(value) {\n  const date = value ? new Date(value) : new Date();\n  const pad = number => String(number).padStart(2, '0');\n  return [date.getFullYear(), pad(date.getMonth() + 1), pad(date.getDate())].join('-') + '-' + pad(date.getHours()) + pad(date.getMinutes());\n}\n\nlet analysis = extractText(response).trim();\nanalysis = analysis.replace(/^\\`\\`\\`(?:markdown|md)?\\s*/i, '').replace(/\\`\\`\\`$/i, '').trim();\nanalysis = analysis.replace(/<br\\s*\\/?>/gi, '\\n').replace(/<\\/?(?:html|body|article|section|main|div|p)[^>]*>/gi, '\\n').trim();\nanalysis = analysis.replace(/^#\\s*File\\s*\\d+\\s*\\n+/i, '').trim();\nanalysis = analysis.replace(/^#\\s*file[_ -]?\\d+\\s*\\n+/i, '').trim();\n\nif (!analysis) {\n  throw new Error('OpenAI gaf geen analyse terug voor het reMarkable PNG-document.');\n}\n\nconst telegram = fromNode('Telegram Trigger');\nconst oldMeta = fromNode('Prepare Remarkable PNG Upload');\nconst ocrPrepare = fromNode('Prepare PNG Render Command');\n  const ocrMeta = ocrPrepare.meta || {};\nconst meta = Object.assign({}, ocrMeta, oldMeta);\n\nconst telegramDocumentName = getValue(telegram, 'message.document.file_name') || getValue(telegram, 'message.document.fileName');\nconst telegramCaption = getValue(telegram, 'message.caption') || '';\nconst messageDate = getValue(telegram, 'message.date');\nconst sourcePdfName = telegramDocumentName || oldMeta.fileName || oldMeta.originalFileName || ocrMeta.fileName || ocrMeta.originalFileName || 'remarkable.png';\n\nconst filenameTitle = String(sourcePdfName).replace(/\\.png$/i, '');\nconst captionTitle = cleanTitleLine(telegramCaption);\nconst titleSource = captionTitle || oldMeta.title || oldMeta.caption || oldMeta.fileTitle || filenameTitle || ocrMeta.title || 'reMarkable notitie';\nconst rawTitle = String(titleSource)\n  .replace(/^\\d{4}-\\d{2}-\\d{2}-\\d{4}-/i, '')\n  .replace(/[-_]+/g, ' ')\n  .trim();\nconst title = rawTitle || 'reMarkable notitie';\nconst created = meta.created || (messageDate ? new Date(messageDate * 1000).toISOString() : new Date().toISOString());\nconst localTime = meta.local_time || new Date(created).toLocaleString('nl-NL', { timeZone: 'Europe/Amsterdam' });\nconst mdFileName = dateStamp(created) + '-' + slugify(title) + '.md';\nconst originalPdfName = dateStamp(created) + '-' + slugify(title) + '.png';\n\nconst lines = [\n  '---',\n  'source: \"telegram\"',\n  'type: \"remarkable_png\"',\n  'capture: \"remarkable_full_png_ocr\"',\n  'status: \"inbox\"',\n  'title: \"' + title.replace(/\"/g, '\\\\\"') + '\"',\n  'created: \"' + created + '\"',\n  'local_time: \"' + localTime + '\"'\n];\nconst chatId = meta.telegram_chat_id || getValue(telegram, 'message.chat.id');\nconst messageId = meta.telegram_message_id || getValue(telegram, 'message.message_id');\nif (chatId) lines.push('telegram_chat_id: \"' + chatId + '\"');\nif (messageId) lines.push('telegram_message_id: \"' + messageId + '\"');\nlines.push('attachment: \"Remarkable/' + originalPdfName + '\"');\nlines.push('tags: [\"capture\", \"telegram\", \"remarkable\", \"ocr\", \"notes\"]');\nlines.push('---', '', '# ' + title, '', '## Originele bestanden', '- PNG: [[Remarkable/' + originalPdfName + ']]', '', analysis);\n\nconst markdown = lines.join('\\n');\n\nreturn [{\n  json: {\n    fileName: mdFileName,\n    title,\n    markdown,\n    originalPdfName\n  },\n  binary: {\n    data: {\n      data: Buffer.from(markdown, 'utf8').toString('base64'),\n      mimeType: 'text/markdown',\n      fileName: mdFileName,\n      fileExtension: 'md'\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3888,
+        1024
+      ],
+      "name": "Build Remarkable PNG OCR Markdown",
+      "id": "099bc99b-c564-4bfd-8059-6495b6290876"
+    },
+    {
+      "parameters": {
+        "chatId": "={{  $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "={{  'reMarkable-notitie verwerkt: ' + $('Build Remarkable PNG OCR Markdown').first().json.title + ' - opgeslagen in Obsidian/Inbox/Remarkable/' + $('Build Remarkable PNG OCR Markdown').first().json.fileName }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4224,
+        1552
+      ],
+      "id": "a8d5c15c-78fb-4466-b767-923361081d2f",
+      "name": "Bevestig Remarkable PNG notitie opgeslagen",
+      "webhookId": "5f33a3bd-2c9a-4e6a-96bb-fa3ce6ea3ca3",
+      "credentials": {
+        "telegramApi": {
+          "id": "40SHzIiYXiRGLVgX",
+          "name": "Obsi8Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.bodyJson || JSON.stringify({ model: 'gpt-4o', input: [{ role: 'user', content: [{ type: 'input_text', text: 'SKIP_DIRECT_REMARKABLE_BRANCH_DO_NOT_WRITE' }] }], temperature: 0, max_output_tokens: 20 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3440,
+        752
+      ],
+      "name": "Analyze Remarkable Full PNG",
+      "id": "9aa16ba4-e774-42c4-828f-33e5d1cd398c",
+      "credentials": {
+        "openAiApi": {
+          "id": "VbpDMZMo5Wwm27NI",
+          "name": "OpenAi account"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Telegram Trigger": [
+      {
+        "json": {
+          "update_id": 718098394,
+          "message": {
+            "message_id": 149,
+            "from": {
+              "id": 7869612749,
+              "is_bot": false,
+              "first_name": "Joep",
+              "language_code": "nl"
+            },
+            "chat": {
+              "id": 7869612749,
+              "first_name": "Joep",
+              "type": "private"
+            },
+            "date": 1782985709,
+            "forward_origin": {
+              "type": "user",
+              "sender_user": {
+                "id": 7869612749,
+                "is_bot": false,
+                "first_name": "Joep",
+                "language_code": "nl"
+              },
+              "date": 1782966626
+            },
+            "forward_from": {
+              "id": 7869612749,
+              "is_bot": false,
+              "first_name": "Joep",
+              "language_code": "nl"
+            },
+            "forward_date": 1782966626,
+            "document": {
+              "file_name": "ee5e5819_70ce_4fcf_9306_4f4d9daebd68_1782964539191_Notebook_18.pdf",
+              "mime_type": "application/pdf",
+              "thumbnail": {
+                "file_id": "AAMCBAADGQEAA5FqRelipSCrsjaPvCEAAYLPHDHhwG8AAtojAAKrcTBSQH5eMHvdbSwBAAdtAAM8BA",
+                "file_unique_id": "AQAD2iMAAqtxMFJy",
+                "file_size": 10878,
+                "width": 155,
+                "height": 320
+              },
+              "thumb": {
+                "file_id": "AAMCBAADGQEAA5FqRelipSCrsjaPvCEAAYLPHDHhwG8AAtojAAKrcTBSQH5eMHvdbSwBAAdtAAM8BA",
+                "file_unique_id": "AQAD2iMAAqtxMFJy",
+                "file_size": 10878,
+                "width": 155,
+                "height": 320
+              },
+              "file_id": "BQACAgQAAxkBAAORakXpYqUgq7I2j7whAAGCzxwx4cBvAALaIwACq3EwUkB-XjB73W0sPAQ",
+              "file_unique_id": "AgAD2iMAAqtxMFI",
+              "file_size": 52414
+            },
+            "caption": "Titel: Test na Analyze-fix en PNG-routing"
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Obsidian Markdown",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Voice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Remarkable PDF Preview",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Remarkable PNG Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Obsidian Markdown": {
+      "main": [
+        [
+          {
+            "node": "Upload Note to Dropbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Voice": {
+      "main": [
+        [
+          {
+            "node": "Get a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a file": {
+      "main": [
+        [
+          {
+            "node": "Transcribe a recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe a recording": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Upload Note to Dropbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Note to Dropbox": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Remarkable PDF Preview": {
+      "main": [
+        [
+          {
+            "node": "Get Remarkable PDF Preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Remarkable PDF Preview": {
+      "main": [
+        [
+          {
+            "node": "Get Remarkable PDF Original File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Remarkable PDF Original File": {
+      "main": [
+        [
+          {
+            "node": "Upload Remarkable PDF Original",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare PDF Render Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Remarkable Full PDF": {
+      "main": [
+        [
+          {
+            "node": "Build Remarkable OCR Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Remarkable OCR Markdown": {
+      "main": [
+        [
+          {
+            "node": "Upload Remarkable OCR Markdown",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract Actiepunten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PDF Render Command": {
+      "main": [
+        [
+          {
+            "node": "Analyze Remarkable Full PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Remarkable OCR Markdown": {
+      "main": [
+        [
+          {
+            "node": "Bevestig Remarkable notitie opgeslagen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Actiepunten": {
+      "main": [
+        [
+          {
+            "node": "Maak Todoist Taak (reMarkable)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Remarkable PNG Upload": {
+      "main": [
+        [
+          {
+            "node": "Get Remarkable PNG File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Remarkable PNG File": {
+      "main": [
+        [
+          {
+            "node": "Prepare PNG Render Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PNG Render Command": {
+      "main": [
+        [
+          {
+            "node": "Analyze Remarkable Full PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Remarkable PNG OCR Markdown": {
+      "main": [
+        [
+          {
+            "node": "Bevestig Remarkable PNG notitie opgeslagen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Remarkable Full PNG": {
+      "main": [
+        [
+          {
+            "node": "Build Remarkable PNG OCR Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "ca570b37-a0f3-4d43-8feb-038717d06c1b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9ffa33f14a03254d8ad8c0def6213d54b6aff26da26b54842a073ddd3fe7dcff"
+  },
+  "id": "NeV4hjgRa2fmuBODN0UQA",
+  "tags": []
+}

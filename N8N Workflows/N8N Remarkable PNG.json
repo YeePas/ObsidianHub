@@ -1,0 +1,185 @@
+{
+  "name": "Remarkable PNG Capture",
+  "nodes": [
+    {
+      "id": "trigger-telegram",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 300],
+      "parameters": { "updates": ["message", "edited_message"], "additionalFields": {} },
+      "credentials": { "telegramApi": { "name": "Obsi8Bot" } }
+    },
+    {
+      "id": "prepare-png-upload",
+      "name": "Prepare Remarkable PNG Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first();\nconst input = item.json || {};\nconst message = input.message || input.edited_message || input.channel_post || input;\nconst document = message.document || {};\nconst caption = String(message.caption || '').trim();\nconst mimeType = String(document.mime_type || '').toLowerCase();\nconst photos = Array.isArray(message.photo) ? message.photo : [];\nconst bestPhoto = photos.length ? photos[photos.length - 1] : {};\nconst originalName = String(document.file_name || (bestPhoto.file_id ? 'telegram-photo.png' : 'remarkable.png'));\nconst isPngDocument = document.file_id && (mimeType === 'image/png' || originalName.toLowerCase().endsWith('.png'));\nconst isPhoto = !!bestPhoto.file_id;\nif (!isPngDocument && !isPhoto) { return []; }\n\nfunction extractManualTitle(value) {\n  const match = String(value || '').match(/^\\s*titel\\s*:?\\s*(.+)$/i);\n  return match ? match[1].trim() : '';\n}\n\nfunction slugify(value) {\n  return String(value || '')\n    .normalize('NFKD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/^-+|-+$/g, '')\n    .slice(0, 80) || 'remarkable-notitie';\n}\n\nconst manualTitle = extractManualTitle(caption);\nconst fallbackTitle = originalName.replace(/\\.(png|jpg|jpeg)$/i, '').replace(/[_-]+/g, ' ');\nconst title = manualTitle || fallbackTitle || 'reMarkable notitie';\n\nconst now = new Date();\nconst pad = n => String(n).padStart(2, '0');\nconst stamp = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + '-' + pad(now.getHours()) + pad(now.getMinutes());\nconst slug = slugify(title);\n\nreturn [{\n  json: {\n    imageFileId: isPhoto ? bestPhoto.file_id : document.file_id,\n    caption,\n    title,\n    stamp,\n    slug,\n    originalName\n  }\n}];"
+      }
+    },
+    {
+      "id": "get-png-file",
+      "name": "Get Remarkable PNG File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [440, 300],
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.imageFileId }}",
+        "download": true
+      },
+      "credentials": { "telegramApi": { "name": "Obsi8Bot" } }
+    },
+    {
+      "id": "prepare-png-render-command",
+      "name": "Prepare PNG Render Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first();\nconst binaryMeta = item.binary && item.binary.data;\nif (!binaryMeta) {\n  throw new Error('Geen PNG-binary gevonden om naar OpenAI te sturen.');\n}\n\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst pngBase64 = buffer.toString('base64');\n\nconst meta = $('Prepare Remarkable PNG Upload').first().json;\nconst title = meta.title;\nconst stamp = meta.stamp;\nconst slug = meta.slug;\nconst originalPngName = stamp + '-' + slug + '.png';\nconst mdFileName = stamp + '-' + slug + '.md';\n\nconst prompt = [\n  'Je analyseert \\u00e9\\u00e9n PNG-afbeelding van een reMarkable-pagina met handgeschreven notities, schetsen en eventueel ingeplakte afbeeldingen.',\n  'Lees handschrift, getypte tekst, pijlen en kaders zo goed mogelijk. Sla losse tekeningen/schetsen/illustraties over: analyseer of beschrijf de inhoud daarvan niet, noteer alleen dat er een tekening aanwezig is.',\n  'Gebruik alleen wat zichtbaar is. Verzin geen ontbrekende tekst, meetings of taken.',\n  'Doe altijd een beste-poging tot transcriptie, ook bij gekleurde schetsen of rommelig handschrift. Gebruik onzeker/onleesbaar alleen als echt niets te onderscheiden is, en beschrijf het element dan toch zo goed mogelijk in plaats van het over te slaan.',\n  '',\n  'Notatie systeem:',\n  '- Onderstreepte tekst = titel. De EERSTE onderstreepte tekst op de pagina is de hoofdtitel en wordt Markdown H1 (\\u00e9\\u00e9n #). Elke volgende onderstreepte tekst is een subtitel en wordt Markdown H2 (##).',\n  '- Een sterretje bij een regel = werknotitie. Schrijf dit in de markdown als bullet met een liggend streepje \"- \", gebruik nooit een letterlijk sterretje.',\n  '- Een leeg vierkantje bij een regel = actiepunt.',\n  '- Een volledige horizontale streep over de regel = start van een nieuwe sectie zonder eigen titel; bedenk zelf een korte passende sectienaam op basis van de notities die volgen.',\n  '',\n  'Maak nette Obsidian Markdown in het Nederlands.',\n  'Structuur:',\n  '1. Begin met een sectie \"## Korte samenvatting\" gevolgd door een lopende tekst van 2-4 zinnen (geen bullets).',\n  '2. Headers per sectie, met de werknotities gegroepeerd op basis van nabijheid op de pagina.',\n  '3. Actiepunten: verzamel alle regels met een leeg vierkantje in een aparte sectie. Gebruik voor elke taak exact het formaat - [ ] Sectienaam: actiegerichte zin. Laat de vierkante haakjes nooit weg.',\n  '4. Illustraties: geen inhoudelijke analyse. Zet alleen een korte regel per sectie met een tekening, bijvoorbeeld Tekening aanwezig, zie origineel PNG. Ga niet in op vorm, kleur of betekenis.',\n  '',\n  'Voeg geen HTML, JSON of code fences toe.',\n  'Zet geen lege regel tussen een header (# of ##) en de bullet- of taken-lijst die daarna volgt.',\n  'Begin niet met bestandsnamen zoals File 16 of page headings. Titelcontext: ' + title\n].join('\\n');\n\nconst body = {\n  model: 'gpt-5.4',\n  input: [{\n    role: 'user',\n    content: [\n      { type: 'input_image', image_url: 'data:image/png;base64,' + pngBase64, detail: 'high' },\n      { type: 'input_text', text: prompt }\n    ]\n  }],\n  temperature: 0.1,\n  max_output_tokens: 4000\n};\n\nreturn [{\n  json: {\n    body,\n    title,\n    stamp,\n    slug,\n    originalPngName,\n    mdFileName,\n    caption: meta.caption\n  },\n  binary: item.binary\n}];"
+      }
+    },
+    {
+      "id": "analyze-png",
+      "name": "Analyze Remarkable Full PNG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "credentials": { "openAiApi": { "name": "OpenAi account" } }
+    },
+    {
+      "id": "build-png-markdown",
+      "name": "Build Remarkable PNG OCR Markdown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const response = $input.first().json || {};\n\nfunction extractText(value) {\n  if (typeof value.output_text === 'string' && value.output_text.trim()) return value.output_text;\n  if (Array.isArray(value.output)) {\n    for (const block of value.output) {\n      if (Array.isArray(block.content)) {\n        for (const part of block.content) {\n          if (typeof part.text === 'string' && part.text.trim()) return part.text;\n        }\n      }\n    }\n  }\n  return '';\n}\n\nconst meta = $('Prepare PNG Render Command').first().json;\nconst bodyText = extractText(response).trim();\nif (!bodyText) {\n  throw new Error('Geen tekst ontvangen van OpenAI voor deze PNG-analyse.');\n}\n\nconst now = new Date();\nconst frontmatter = [\n  '---',\n  'source: \"telegram\"',\n  'type: \"remarkable_png\"',\n  'capture: \"remarkable_png_ocr\"',\n  'status: \"inbox\"',\n  `title: \"${meta.title.replace(/\"/g, '\\\\\"')}\"`,\n  `created: \"${now.toISOString()}\"`,\n  `local_time: \"${now.toLocaleString('nl-NL')}\"`,\n  `attachment: \"Remarkable/${meta.originalPngName}\"`,\n  'tags: [\"capture\", \"telegram\", \"remarkable\", \"ocr\", \"notes\"]',\n  '---',\n  ''\n].join('\\n');\n\nconst introSection = [\n  `# ${meta.title}`,\n  '',\n  '## Originele bestanden',\n  `- PNG: [[Remarkable/${meta.originalPngName}]]`,\n  ''\n].join('\\n');\n\nconst markdown = frontmatter + '\\n' + introSection + '\\n' + bodyText + '\\n';\n\nconst actiepunten = [];\nconst lines = bodyText.split('\\n');\nfor (const line of lines) {\n  const match = line.match(/^-\\s*\\[\\s*\\]\\s*(.+)$/);\n  if (match) actiepunten.push(match[1].trim());\n}\n\nreturn [{\n  json: {\n    markdown,\n    mdFileName: meta.mdFileName,\n    originalPngName: meta.originalPngName,\n    title: meta.title,\n    actiepunten\n  },\n  binary: $('Prepare PNG Render Command').first().binary\n}];"
+      }
+    },
+    {
+      "id": "upload-png-markdown",
+      "name": "Upload Remarkable PNG Markdown",
+      "type": "n8n-nodes-base.dropbox",
+      "typeVersion": 1,
+      "position": [1320, 220],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "path": "=/Obsidian/Inbox/Remarkable/{{ $json.mdFileName }}",
+        "binaryData": false,
+        "fileContent": "={{ $json.markdown }}"
+      },
+      "credentials": { "dropboxApi": { "name": "Dropbox account" } }
+    },
+    {
+      "id": "upload-png-original",
+      "name": "Upload Remarkable PNG Original",
+      "type": "n8n-nodes-base.dropbox",
+      "typeVersion": 1,
+      "position": [1320, 380],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "path": "=/Obsidian/Attachments/Remarkable/{{ $json.originalPngName }}",
+        "binaryData": true,
+        "binaryPropertyName": "data"
+      },
+      "credentials": { "dropboxApi": { "name": "Dropbox account" } }
+    },
+    {
+      "id": "bevestig-png",
+      "name": "Bevestig Remarkable PNG notitie opgeslagen",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1540, 220],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "=reMarkable-notitie verwerkt: {{ $('Build Remarkable PNG OCR Markdown').first().json.title }} — opgeslagen in Obsidian/Inbox/Remarkable/",
+        "additionalFields": {}
+      },
+      "credentials": { "telegramApi": { "name": "Obsi8Bot" } }
+    },
+    {
+      "id": "extract-actiepunten-png",
+      "name": "Extract Actiepunten (PNG)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 540],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const data = $('Build Remarkable PNG OCR Markdown').first().json;\nconst items = (data.actiepunten || []).map(text => ({ json: { content: text, title: data.title } }));\nreturn items;"
+      }
+    },
+    {
+      "id": "maak-todoist-taak-png",
+      "name": "Maak Todoist Taak (PNG)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 540],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.todoist.com/api/v1/tasks",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "todoistApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: $json.content }) }}",
+        "options": {}
+      },
+      "credentials": { "todoistApi": { "name": "Todoist account" } }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[ { "node": "Prepare Remarkable PNG Upload", "type": "main", "index": 0 } ]] },
+    "Prepare Remarkable PNG Upload": { "main": [[ { "node": "Get Remarkable PNG File", "type": "main", "index": 0 } ]] },
+    "Get Remarkable PNG File": { "main": [[ { "node": "Prepare PNG Render Command", "type": "main", "index": 0 } ]] },
+    "Prepare PNG Render Command": { "main": [[ { "node": "Analyze Remarkable Full PNG", "type": "main", "index": 0 } ]] },
+    "Analyze Remarkable Full PNG": { "main": [[ { "node": "Build Remarkable PNG OCR Markdown", "type": "main", "index": 0 } ]] },
+    "Build Remarkable PNG OCR Markdown": { "main": [[
+      { "node": "Upload Remarkable PNG Markdown", "type": "main", "index": 0 },
+      { "node": "Upload Remarkable PNG Original", "type": "main", "index": 0 },
+      { "node": "Extract Actiepunten (PNG)", "type": "main", "index": 0 }
+    ]] },
+    "Upload Remarkable PNG Markdown": { "main": [[ { "node": "Bevestig Remarkable PNG notitie opgeslagen", "type": "main", "index": 0 } ]] },
+    "Extract Actiepunten (PNG)": { "main": [[ { "node": "Maak Todoist Taak (PNG)", "type": "main", "index": 0 } ]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}
