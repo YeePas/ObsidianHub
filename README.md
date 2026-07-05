@@ -78,8 +78,7 @@ PNG notes work via a separate, standalone workflow (`png-flow-n8n-workflow.json`
 - [ ] Apply the `/api/v1/tasks` Todoist endpoint fix to the live "Maak Todoist Taak (reMarkable)" node (already fixed in the PNG workflow).
 - [ ] Migrate the Dropbox credential from Access Token to OAuth2, so tokens stop expiring and needing manual regeneration.
 - [ ] Add retry/error handling to critical nodes (Dropbox, OpenAI, Todoist) so one failure doesn't take down the whole execution.
-- [ ] No persistent execution history — n8n execution logs were lost after a restart; consider a persistent database.
-- [ ] The ngrok tunnel URL is not stable; consider a fixed domain.
+- [ ] The ngrok for N8N tunnel URL is not stable; consider a fixed domain.
 
 See `architectuur-en-roadmap.md` for full detail on each item.
 
