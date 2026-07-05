@@ -13,7 +13,7 @@ You message the **Obsi8Bot** on Telegram. Depending on what you send, the workfl
 | Text message | Converted directly to a Markdown note |
 | Voice message | Downloaded, transcribed, converted to a Markdown note |
 | reMarkable PDF export | Sent to OpenAI for full OCR/analysis, converted to a structured note with summary, sections, action items, and illustration references |
-| reMarkable PNG (in progress) | Same idea as the PDF flow, for a single exported page image — see [Status](#status) |
+| reMarkable PNG (single page) | Same idea as the PDF flow, for a single exported page image — runs as a separate n8n workflow, same bot, see [Status](#status) |
 
 Every note is saved to `Obsidian/Inbox/...` in a Dropbox folder that syncs into the Obsidian vault. You get a confirmation message back in Telegram once it's done.
 
@@ -54,6 +54,7 @@ Telegram Trigger
 
 - **OCR model:** OpenAI `gpt-5.4` via the Responses API (`/v1/responses`), called directly with an HTTP Request node (not the built-in n8n OpenAI node), `temperature: 0.1` for consistent output.
 - **Storage:** Dropbox app folder `/Obsidian/Inbox/Remarkable/...`, synced to the Obsidian vault.
+- **Dropbox auth:** being migrated from a manual "Access Token" (short-lived, ~4 hours, needs regenerating by hand) to **OAuth2** (refresh token, renews itself automatically and doesn't expire). Uses the same Dropbox app — the App key/secret double as the Client ID/Secret. Free, no production approval required for personal use.
 - **Link to source:** every note gets an `## Originele bestanden` section near the top with a clickable Obsidian link (`[[Remarkable/filename]]`) back to the original PDF/PNG — a plain reference, not an inline embed.
 - **Todoist integration:** action items are parsed out of the markdown and created one by one via an HTTP node to `https://api.todoist.com/api/v1/tasks` (the old `/rest/v2/tasks` endpoint was deprecated as of July 2026).
 
@@ -71,11 +72,11 @@ Telegram Trigger
 
 The text, voice, and reMarkable PDF branches are live and working in the main "Obsidian" n8n workflow. The PNG branch inside that same workflow is broken (wrong Telegram credential on the file-download node) and disabled.
 
-A standalone PNG-capture workflow (`png-flow-n8n-workflow.json`) is being built and tested separately, node by node. Known open items:
+PNG notes work via a separate, standalone workflow (`png-flow-n8n-workflow.json`), using the same bot. It's been tested node-by-node and is working. Known open items:
 
-- [ ] Fix the Telegram credential on "Get Remarkable PNG File" in the main workflow, or keep using the standalone PNG JSON instead.
-- [ ] Finish testing the remaining nodes in the standalone PNG flow (Analyze, both Uploads, Bevestig, Extract Actiepunten).
-- [ ] Apply the `/api/v1/tasks` Todoist endpoint fix to the live "Maak Todoist Taak (reMarkable)" node (already fixed in the PNG JSON).
+- [ ] Fix the Telegram credential on "Get Remarkable PNG File" in the main workflow, or keep using the standalone PNG workflow instead (recommended — no need to fix the broken branch).
+- [ ] Apply the `/api/v1/tasks` Todoist endpoint fix to the live "Maak Todoist Taak (reMarkable)" node (already fixed in the PNG workflow).
+- [ ] Migrate the Dropbox credential from Access Token to OAuth2, so tokens stop expiring and needing manual regeneration.
 - [ ] Add retry/error handling to critical nodes (Dropbox, OpenAI, Todoist) so one failure doesn't take down the whole execution.
 - [ ] No persistent execution history — n8n execution logs were lost after a restart; consider a persistent database.
 - [ ] The ngrok tunnel URL is not stable; consider a fixed domain.
@@ -85,6 +86,6 @@ See `architectuur-en-roadmap.md` for full detail on each item.
 ## Setup
 
 1. Import the workflow into n8n.
-2. Connect credentials: Telegram Bot API (Obsi8Bot), OpenAI API, Dropbox API, Todoist API.
+2. Connect credentials: Telegram Bot API (Obsi8Bot), OpenAI API, Dropbox API (OAuth2 recommended over Access Token — see Status), Todoist API.
 3. Point the Dropbox upload paths at your own `Obsidian/Inbox/...` folder structure.
 4. Publish the workflow — n8n keeps canvas edits as an unpublished draft until you explicitly click **Publish**.

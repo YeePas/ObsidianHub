@@ -95,7 +95,7 @@ Zie het architectuur-document voor de technische details en het overzicht van wa
 In de map `Obsidian/Inbox/...` in je gekoppelde Dropbox, die via Dropbox-sync in je Obsidian-vault verschijnt.
 
 **Wat als de bot niet reageert?**
-Controleer of de n8n-workflow **gepubliceerd** is (niet alleen opgeslagen als concept) — n8n gebruikt een aparte "Publish"-stap voordat wijzigingen echt live gaan.
+Controleer of de n8n-workflow **gepubliceerd** is (niet alleen opgeslagen als concept) — n8n gebruikt een aparte "Publish"-stap voordat wijzigingen echt live gaan. Controleer ook de Dropbox-credential: bij de oude Access Token-methode verloopt die na een paar uur, waardoor niets wordt opgeslagen. Dit wordt opgelost door over te stappen op OAuth2 (zie architectuur-document).
 
 **Kan ik meerdere PDF's of PNG's tegelijk sturen?**
 Ja, elk bericht met een bijlage triggert een eigen, onafhankelijke verwerking.

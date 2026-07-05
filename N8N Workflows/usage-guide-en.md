@@ -95,7 +95,7 @@ See the architecture document for technical details and the list of bugs found a
 In the `Obsidian/Inbox/...` folder in your linked Dropbox, which appears in your Obsidian vault via Dropbox sync.
 
 **What if the bot doesn't respond?**
-Check whether the n8n workflow is actually **published** (not just saved as a draft) — n8n uses a separate "Publish" step before changes go live.
+Check whether the n8n workflow is actually **published** (not just saved as a draft) — n8n uses a separate "Publish" step before changes go live. Also check the Dropbox credential: with the old Access Token method it expires after a few hours, so nothing gets saved. This is fixed by switching to OAuth2 (see the architecture document).
 
 **Can I send multiple PDFs at once?**
 Yes, each message with an attachment triggers its own, independent processing run.
